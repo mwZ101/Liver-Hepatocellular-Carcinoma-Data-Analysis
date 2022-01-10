@@ -1,0 +1,158 @@
+---
+title: "Patient Plots"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+
+# Reading the text file
+clinicalData <- read.table(file="./data_clinical_patient.txt", header=TRUE, sep="\t")
+patient_data <- as.data.frame(clinicalData)
+
+# Filling empty cells with NA
+patient_data[patient_data == ""] <- NA
+
+# Plotting bar graphs for all the columns to see if there are any interesting trends for counts
+for (i in 5:ncol(patient_data)) {
+
+  # Skips any columns with just NA's
+  if (sum(is.na(patient_data[, i])) == length(patient_data[, i])) {
+    next
+  }
+
+  barplot(table(patient_data[, i]), xlab=colnames(patient_data)[i], ylab="Counts", cex.names=0.75)
+}
+```
+
+```{r}
+patient_data_df <- data.frame(patient_data)
+
+# Splitting the dataset into a numerical and categorical set
+numeric_patient_data_df <- select_if(patient_data_df[, 5:ncol(patient_data_df)], is.numeric)
+
+categorical_patient_data_df <- patient_data_df[, 5:ncol(patient_data_df)]
+categorical_patient_data_df <- categorical_patient_data_df[, -which(colnames(categorical_patient_data_df) %in% colnames(numeric_patient_data_df))]
+
+# The following columns don't provide much meaning contextually or because of having just the same value for the whole column, so they're removed
+categorical_patient_data_df <- categorical_patient_data_df[, -which(colnames(categorical_patient_data_df) %in% c("FORM_COMPLETION_DATE", "HISTORY_NEOADJUVANT_TRTYN", "ICD_10", "ICD_O_3_SITE", "INFORMED_CONSENT_VERIFIED", "PRIMARY_LYMPH_NODE_PRESENTATION_ASSESSMENT", "CENTER"))]
+
+numeric_patient_data_df <- subset(numeric_patient_data_df, select=-DAYS_TO_INITIAL_PATHOLOGIC_DIAGNOSIS)
+
+```
+
+```{r}
+# For the columns that have "categories," change to numeric
+# categories for correlation purposes
+legends <- list()
+
+for (i in seq(1, ncol(categorical_patient_data_df), by=1)) {
+
+    unique_categ <- unique(categorical_patient_data_df[, i])
+    unique_categ <- unique_categ[!is.na(unique_categ)] # removes NA label from this list
+    legends[[colnames(categorical_patient_data_df)[i]]] <- c(unique_categ)
+    
+    # Loops through the column to change to numeric categories
+    for (n in seq(0, length(unique_categ), by=1)) {
+
+      category_indices <- which(categorical_patient_data_df[, i] == unique_categ[n])
+
+      if (sum(is.na(categorical_patient_data_df[, i])) == nrow(patient_data_df)) {
+        next
+
+      } else {
+        
+        if (n - 1 >= 0) {
+          categorical_patient_data_df[category_indices, i] <- as.numeric(n - 1)
+
+        } else {
+          categorical_patient_data_df[category_indices, i] <- as.numeric(n)
+        }
+      }
+    }
+}
+```
+
+```{r}
+# Using chi-squared test to find correlations between the categorical values 
+chisq_patient_data_df <- data.frame(matrix(nrow=ncol(categorical_patient_data_df), ncol=ncol(categorical_patient_data_df)))
+
+for (col1 in seq(1, ncol(categorical_patient_data_df), by=1)) {
+  for (col2 in seq(1, ncol(categorical_patient_data_df), by=1)) {
+    
+    pVal <- round(chisq.test(categorical_patient_data_df[, col1], categorical_patient_data_df[, col2])$p.value, 2)
+    chisq_patient_data_df[col1, col2] <- pVal
+  }
+}
+colnames(chisq_patient_data_df) <- colnames(categorical_patient_data_df)
+rownames(chisq_patient_data_df) <- colnames(categorical_patient_data_df)
+
+
+```
+
+```{r}
+# Creating the heatmaps for both numerical and categorical correlations
+
+numerical_correlation_matx <- round(cor(x=numeric_patient_data_df, use="complete.obs"), 2)
+chisq_patient_data_df["cols"] <- colnames(categorical_patient_data_df)
+
+numerical_corr_matx_melted <- melt(numerical_correlation_matx)
+categorical_corr_matx_melted <- melt(chisq_patient_data_df, id.vars=c("cols"))
+
+heatmap_numerical <- ggplot(data=numerical_corr_matx_melted, aes(x=Var1, y=Var2, fill=value)) +
+  geom_tile() +
+  geom_text(aes(Var1, Var2, label=value), size=3, color="white") +
+  xlab("") +
+  ylab("") +
+  theme(axis.text.x=element_text(angle=90, hjust=1, size=7), axis.text.y=element_text(size=7))
+
+heatmap_categorical <- ggplot(data=categorical_corr_matx_melted, aes(x=cols, y=variable, fill=value)) +
+  geom_tile() +
+  geom_text(aes(cols, variable, label=value), size=3, color="white") +
+  xlab("") +
+  ylab("") +
+  theme(axis.text.x=element_text(angle=90, hjust=1, size=5), axis.text.y=element_text(size=5))
+
+heatmap_numerical 
+heatmap_categorical
+
+```
+
+```{r}
+# Make scatter plots for both numerical and categorical sets that have correlations that are higher than 50%
+
+for (row_num in seq(1, nrow(numerical_corr_matx_melted), by=1)) {
+  if (abs(numerical_corr_matx_melted[row_num, "value"]) >= 0.5) {
+    
+    var_name_num <- c(numerical_corr_matx_melted[row_num, c("Var2")])
+    col_name_num <- c(numerical_corr_matx_melted[row_num, c("Var1")])
+
+    if (var_name_num != col_name_num) {
+      x_num <- numeric_patient_data_df[, var_name_num]
+      y_num <- numeric_patient_data_df[, col_name_num]
+      
+      scatter_plot_num <- plot(x_num, y_num, xlab=var_name_num, ylab=col_name_num)
+    } 
+  }
+}
+
+for (row_categ in seq(1, nrow(categorical_corr_matx_melted), by=1)) {
+  if (categorical_corr_matx_melted[row_categ, "value"] >= 0.5) {
+    
+    var_name_categ <- c(categorical_corr_matx_melted[row_categ, c("variable")])
+    col_name_categ <- c(categorical_corr_matx_melted[row_categ, c("cols")])
+    
+    x_categ <- categorical_patient_data_df[, var_name_categ]
+    y_categ <- categorical_patient_data_df[, col_name_categ]
+    
+    scatter_plot_categ <- plot(x_categ, y_categ, xlab=var_name_categ, ylab=col_name_categ)
+  }
+}
+```

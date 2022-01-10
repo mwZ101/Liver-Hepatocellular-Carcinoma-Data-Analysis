@@ -1,0 +1,75 @@
+---
+title: "Survival Analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r lib, echo=FALSE, message=FALSE, warning=FALSE}
+library("survival")
+library("survminer")
+
+# Reading the text files and turning them into data frames
+clinicalData <- read.table(file="./data_clinical_patient.txt", header=TRUE, sep="\t")
+patient_data_df <- as.data.frame(clinicalData)
+
+mutationData <- read.table(file="./data_mutations_extended.txt", header=TRUE, sep="\t")
+mutation_data_df <- as.data.frame(mutationData)
+```
+
+```{r}
+# Make a new column in mutation_data_df for patient ID
+mutation_data_df$Patient_ID <- gsub("-01", "", mutation_data_df$Tumor_Sample_Barcode)
+
+# Select the relevant rows of data from patient_data_df that corresponds to the patients in mutation_data_df
+select_mutation_data_df <- mutation_data_df[which(mutation_data_df$Patient_ID %in% patient_data_df$PATIENT_ID), ]
+
+select_patient_data_df <- patient_data_df[which(patient_data_df$PATIENT_ID %in% select_mutation_data_df$Patient_ID), ]
+
+```
+
+```{r}
+# Get the relevant patient survival data columns and organize into a data frame
+patient_survival_status <- select_patient_data_df$OS_STATUS
+deceased_status <- patient_survival_status == "1:DECEASED"
+
+# Converted the months to days by multiplying by 30 days
+patient_survival_days <- select_patient_data_df$OS_MONTHS * 30
+patient_ID <- select_patient_data_df$PATIENT_ID
+
+patient_survival_df <- data.frame(patient_ID, patient_survival_status, deceased_status, patient_survival_days)
+
+```
+
+```{r}
+# This part creates a data frame of the frequency of each gene appearing in the gene mutation dataset
+
+count_mutated_gene_df <- data.frame(table(select_mutation_data_df$Hugo_Symbol))
+gene_counts_more_than_twenty <- count_mutated_gene_df[which(count_mutated_gene_df$Freq > 10), ]
+
+```
+
+```{r}
+
+# This loops through all the different genes and selects the patient survival data for that particular gene and makes individual survival analysis plot
+for (i in seq(1, nrow(gene_counts_more_than_twenty), by=1)) {
+  
+  select_mutation_data_genes <- select_mutation_data_df[which(select_mutation_data_df$Hugo_Symbol %in% c(gene_counts_more_than_twenty$Var1[i])), ]
+  
+  unique_patients <- unique(select_mutation_data_genes$Patient_ID)
+  unique_patients_survival_df <- patient_survival_df[which(patient_survival_df$patient_ID %in% unique_patients), ]
+  
+  survival_model_fit <- survfit(Surv(patient_survival_days, deceased_status) ~ 1, data=unique_patients_survival_df)
+  
+  survival_plot_gene <- ggsurvplot(survival_model_fit, data=unique_patients_survival_df, legend="none", palette="blue") + ggtitle(paste("Survival Analysis Plot for the Gene:", gene_counts_more_than_twenty$Var1[i])) + xlab("Time (Days)") 
+  print(survival_plot_gene)
+  
+}
+
+survival_model_fit <- survfit(Surv(patient_survival_days, deceased_status) ~ 1, data=patient_survival_df) 
+
+survival_plot_gene <- ggsurvplot(survival_model_fit, data=patient_survival_df, legend="none", palette="orange") + ggtitle("Survival Analysis Plot for all Patients") + xlab("Time (Days)") 
+print(survival_plot_gene)
+```
